@@ -1,0 +1,15 @@
+node_modules/
+data/
+logs/
+run/
+ui-test-output/
+*.log
+.env
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
+*.pem
+*.key
+id_ed25519
+id_rsa
+.DS_Store

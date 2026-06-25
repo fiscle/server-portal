@@ -1,0 +1,172 @@
+.invite-panel,
+.invite-admin-panel {
+  margin-top: 20px;
+}
+
+.code-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 12px;
+}
+
+.code-card {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px;
+  background: #fafbfc;
+}
+
+.code-card code {
+  display: block;
+  font-weight: 800;
+  letter-spacing: .08em;
+  color: #2c5ed7;
+  font-size: 14px;
+}
+
+.code-card small {
+  display: block;
+  color: var(--muted);
+  margin-top: 7px;
+}
+
+.code-card button {
+  margin-top: 10px;
+}
+
+.badge.off {
+  background: #f5ecee;
+  color: #ad4b54;
+}
+
+.referral-chain-view {
+  display: grid;
+  gap: 10px;
+}
+
+.referral-node {
+  display: flex;
+  gap: 12px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fafbfc;
+}
+
+.referral-index {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  color: #fff;
+  background: var(--blue);
+  font-weight: 700;
+}
+
+.referral-node p {
+  margin: 5px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.referral-node code {
+  color: #526079;
+  font-size: 11px;
+}
+
+.referral-arrow {
+  padding-left: 22px;
+  color: var(--blue);
+  font-size: 12px;
+}
+
+.chain-warning {
+  color: #ad4b54;
+}
+
+.user-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.user-toolbar input {
+  width: min(320px, 100%);
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.user-toolbar span {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.pagination {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.pagination button {
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fff;
+  color: #596477;
+}
+
+.pagination button.active {
+  border-color: var(--blue);
+  color: #fff;
+  background: var(--blue);
+}
+
+.pagination button:disabled {
+  opacity: .45;
+  cursor: default;
+}
+
+.referral-chain-scroll {
+  max-height: min(65vh, 620px);
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.chain-summary {
+  color: var(--muted);
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+
+.chain-load-more {
+  width: 100%;
+  margin-top: 10px;
+}
+
+dialog .dialog-shell {
+  padding: 25px;
+  position: relative;
+}
+
+dialog .dialog-shell form {
+  padding: 0;
+}
+
+@media (max-width: 620px) {
+  .user-toolbar {
+    flex-wrap: wrap;
+  }
+
+  .user-toolbar span {
+    width: 100%;
+    margin-left: 0;
+  }
+}

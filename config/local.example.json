@@ -1,0 +1,24 @@
+{
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8088
+  },
+  "session": {
+    "timeoutMs": 28800000
+  },
+  "registration": {
+    "adminInviteCount": 6,
+    "userInviteCount": 3
+  },
+  "files": {
+    "root": "./data/files",
+    "maxUploadBytes": 104857600,
+    "maxUploadFiles": 10
+  },
+  "resources": {
+    "allowUsers": true
+  },
+  "data": {
+    "root": "./data"
+  }
+}

@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>云枢 · 运维管理平台</title>
+  <link rel="stylesheet" href="/vendor/xterm/css/xterm.css">
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/invites.css">
+  <link rel="stylesheet" href="/remote-sessions.css">
+  <link rel="stylesheet" href="/sidebar-collapse.css">
+  <link rel="stylesheet" href="/captcha.css">
+</head>
+<body>
+  <div id="toast"></div>
+  <main id="auth-view" class="auth-shell">
+    <section class="brand-panel">
+      <div class="brand-mark">Y</div>
+      <div>
+        <p class="eyebrow">YUNSHU CONSOLE</p>
+        <h1>让服务器管理<br>简单而清晰。</h1>
+        <p class="brand-copy">用户、远程终端与业务文件，集中在一个轻巧、安全的工作台。</p>
+      </div>
+      <div class="server-chip"><span></span> Server online · 192.168.99.101</div>
+    </section>
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div class="mobile-brand"><div class="brand-mark">Y</div><b>云枢</b></div>
+        <div class="auth-tabs">
+          <button class="active" data-auth-tab="login">登录</button>
+          <button data-auth-tab="register">注册</button>
+        </div>
+        <form id="login-form">
+          <h2>欢迎回来</h2><p>登录你的运维工作台</p>
+          <label>用户名<input name="username" autocomplete="username" placeholder="请输入用户名" required></label>
+          <label>密码<input type="password" name="password" autocomplete="current-password" placeholder="请输入密码" required></label>
+          <label class="captcha-field" data-captcha-field="login" hidden>动态码<div class="captcha-row"><input name="captchaCode" autocomplete="off" maxlength="5" placeholder="输入图中字符"><input type="hidden" name="captchaToken"><button type="button" class="captcha-image" data-captcha-for="login" title="点击刷新"><img alt="动态验证码"></button></div><small class="captcha-tip">看不清？点击图片刷新</small></label>
+          <button class="primary" type="submit">进入系统 <span>→</span></button>
+        </form>
+        <form id="register-form" hidden>
+          <h2>创建账号</h2><p id="register-hint">首位注册者将自动成为管理员</p>
+          <label>姓名<input name="displayName" placeholder="例如：张明" required></label>
+          <label>用户名<input name="username" autocomplete="username" placeholder="3-32 位字母或数字" required></label>
+          <label>密码<input type="password" name="password" autocomplete="new-password" placeholder="至少 8 位" minlength="8" required></label>
+          <label id="invite-code-field" hidden>推荐码<input name="inviteCode" autocomplete="off" placeholder="XXXX-XXXX-XXXX"></label>
+          <label class="captcha-field" data-captcha-field="register" hidden>动态码<div class="captcha-row"><input name="captchaCode" autocomplete="off" maxlength="5" placeholder="输入图中字符"><input type="hidden" name="captchaToken"><button type="button" class="captcha-image" data-captcha-for="register" title="点击刷新"><img alt="动态验证码"></button></div><small class="captcha-tip">检测到频繁操作后才需要输入动态码</small></label>
+          <button class="primary" type="submit">完成注册 <span>→</span></button>
+        </form>
+      </div>
+    </section>
+  </main>
+
+  <div id="app-view" class="app-shell" hidden>
+    <aside class="sidebar">
+      <div class="logo"><div class="brand-mark">Y</div><div class="logo-copy"><b>云枢</b><small>运维管理平台</small></div><button id="sidebar-collapse" title="收起菜单">‹</button></div>
+      <nav>
+        <p>工作台</p>
+        <button class="active" data-page="dashboard"><i>⌂</i><span>总览</span></button>
+        <p>系统管理</p>
+        <button data-page="users"><i>♙</i><span>用户管理</span></button>
+        <button data-page="remote"><i>⌘</i><span>远程管理</span></button>
+        <button data-page="files"><i>▱</i><span>文件管理</span></button>
+        <button data-page="resources"><i>◈</i><span>服务器资源</span></button>
+        <button data-page="audit"><i>◎</i><span>日志查询</span></button>
+      </nav>
+      <div class="sidebar-user"><div class="avatar"></div><div><b id="side-name"></b><small id="side-role"></small></div><button id="logout" title="退出">↗</button></div>
+    </aside>
+    <section class="workspace">
+      <header><button id="menu-toggle">☰</button><div><p id="breadcrumb">工作台 / 总览</p><h2 id="page-title">总览</h2></div><div class="status"><span></span> 系统运行正常</div></header>
+      <div class="content">
+        <section class="page active" id="page-dashboard">
+          <div class="hero-card"><div><p>早上好，<span id="hello-name"></span></p><h2>今天也要保持系统井然有序。</h2><span>你可以从左侧快速进入各项管理功能。</span></div><div class="hero-art">⌁</div></div>
+          <div class="stat-grid">
+            <article><i class="blue">♙</i><div><small>用户管理</small><b id="stat-users">—</b><span>账号与权限</span></div></article>
+            <article><i class="green">⌘</i><div><small>远程管理</small><b>SSH</b><span>内网安全连接</span></div></article>
+            <article><i class="purple">▱</i><div><small>文件管理</small><b id="stat-files">—</b><span>个人文件空间</span></div></article>
+          </div>
+          <div class="panel quick"><div class="panel-title"><div><h3>快捷入口</h3><p>常用功能，一步直达</p></div></div><div class="quick-grid">
+            <button data-go="users"><i>♙</i><span><b>用户管理</b><small>管理账号和密码</small></span><em>›</em></button>
+            <button data-go="remote"><i>⌘</i><span><b>连接本机</b><small>SSH 127.0.0.1</small></span><em>›</em></button>
+            <button data-go="files"><i>⇧</i><span><b>上传文件</b><small>进入业务文件区</small></span><em>›</em></button>
+          </div></div>
+          <div class="panel invite-panel"><div class="panel-title"><div><h3>我的推荐码</h3><p>分享可用推荐码，邀请新用户注册</p></div><span id="mine-invite-count" class="badge on">—</span></div><div id="mine-invites" class="code-grid"></div></div>
+        </section>
+
+        <section class="page" id="page-users">
+          <div class="panel">
+            <div class="panel-title"><div><h3>账号管理</h3><p>维护系统用户、角色与登录状态</p></div><button class="secondary" id="change-password">修改我的密码</button></div>
+            <div class="user-toolbar"><input id="user-search" placeholder="搜索姓名或用户名"><button class="secondary" id="user-search-button">搜索</button><button class="link-btn" id="user-search-clear">清除</button><span id="user-total"></span></div>
+            <div id="users-table" class="table-wrap"></div>
+            <div id="users-pagination" class="pagination"></div>
+          </div>
+          <div class="panel invite-admin-panel">
+            <div class="panel-title"><div><h3>推荐码管理</h3><p>查看推荐关系、使用情况并管理未使用的推荐码</p></div><button class="secondary" id="create-invites">生成推荐码</button></div>
+            <div id="invites-table" class="table-wrap"></div>
+            <div id="invites-pagination" class="pagination"></div>
+          </div>
+        </section>
+
+        <section class="page" id="page-remote">
+          <div class="remote-grid">
+            <div id="remote-side-panel"><button class="side-handle remote-handle" id="remote-panel-collapse" title="显示会话面板"></button>
+              <div class="panel session-library">
+                <div class="panel-title"><div><h3>远程会话</h3><p>选择已授权的会话直接连接</p></div><div class="actions"><button class="secondary" id="add-remote-session" hidden>配置会话</button><button class="side-handle inline-handle" id="remote-panel-title-collapse" title="收起会话面板" aria-label="收起会话面板"></button></div></div>
+                <div id="remote-session-list" class="session-list"></div>
+              </div>
+            </div>
+            <div class="terminal-card">
+              <div class="terminal-head"><div><span class="red"></span><span class="yellow"></span><span class="green"></span></div><button id="remote-panel-expand" hidden>显示会话</button><b id="terminal-title">尚未连接</b><button id="terminal-close">断开</button></div>
+              <div id="terminal"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="page" id="page-files">
+          <div class="panel">
+            <div class="panel-title"><div><h3>业务文件</h3><p id="file-path">我的文件 /</p></div><div class="actions"><button class="secondary" id="file-scope-toggle" hidden>查看全部用户文件</button><button class="secondary" id="new-folder">新建文件夹</button><label class="primary upload">上传文件<input id="file-upload" type="file" multiple hidden></label></div></div>
+            <div id="drop-zone" class="drop-zone"><span>⇧</span><b>拖放文件到这里上传</b><small>也可以点击右上角“上传文件”；单个文件最大 100 MB</small></div>
+            <div id="files-table" class="table-wrap"></div>
+          </div>
+        </section>
+
+        <section class="page" id="page-resources">
+          <div class="panel">
+            <div class="panel-title"><div><h3>服务器资源</h3><p id="resource-summary">查看当前服务器 CPU、内存、磁盘与进程状态</p></div><button class="secondary" id="refresh-resources">刷新</button></div>
+            <div id="resource-cards" class="resource-grid"></div>
+            <div id="resource-detail" class="resource-detail"></div>
+          </div>
+        </section>
+
+        <section class="page" id="page-audit">
+          <div class="panel">
+            <div class="panel-title"><div><h3>日志查询</h3><p>查询用户登录、文件操作、远程连接、密码修改等审计记录</p></div><button class="secondary" id="audit-refresh">刷新</button></div>
+            <div class="user-toolbar audit-toolbar">
+              <input id="audit-search" placeholder="搜索用户、动作、详情、IP">
+              <input id="audit-username" placeholder="用户名">
+              <select id="audit-action"><option value="">全部动作</option></select>
+              <input id="audit-from" type="datetime-local" title="开始时间">
+              <input id="audit-to" type="datetime-local" title="结束时间">
+              <button class="secondary" id="audit-search-button">搜索</button>
+              <button class="link-btn" id="audit-clear">清除</button>
+              <span id="audit-total"></span>
+            </div>
+            <div id="audit-table" class="table-wrap"></div>
+            <div id="audit-pagination" class="pagination"></div>
+          </div>
+        </section>
+      </div>
+    </section>
+  </div>
+
+  <dialog id="modal"><div class="dialog-shell"><button type="button" class="dialog-close">×</button><h3 id="modal-title"></h3><div id="modal-body"></div></div></dialog>
+  <script src="/vendor/xterm/lib/xterm.js"></script>
+  <script src="/vendor/xterm-fit/lib/addon-fit.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
