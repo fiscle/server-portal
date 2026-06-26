@@ -460,7 +460,7 @@ function verifyRemoteReauthPassword(password, user) {
 
 function createRemoteReauthToken(req, user, purpose, sessionId = '') {
   const token = crypto.randomBytes(32).toString('hex');
-  const ttlMs = purpose === 'remote-connect' ? 90 * 1000 : 5 * 60 * 1000;
+  const ttlMs = Math.max(30 * 1000, Number(config.reauth.tokenTtlMs) || 30 * 60 * 1000);
   remoteReauthTokens.set(token, {
     userId: user.id,
     sid: cookies(req).sid || '',

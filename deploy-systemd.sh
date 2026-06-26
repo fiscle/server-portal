@@ -9,6 +9,7 @@ APP_USER="portal"
 PORT="8088"
 HOST="127.0.0.1"
 SESSION_TIMEOUT_MS="28800000"
+REAUTH_TOKEN_TTL_MS="1800000"
 ADMIN_INVITE_COUNT="6"
 USER_INVITE_COUNT="3"
 FILE_ROOT=""
@@ -41,6 +42,7 @@ Options:
   --port PORT                  App listen port, default: 8088
   --host HOST                  App listen host, default: 127.0.0.1
   --session-timeout-ms MS      Login session timeout, default: 28800000
+  --reauth-token-ttl-ms MS     Sensitive-operation reauth token TTL, default: 1800000
   --admin-invite-count N       Invite codes for first/admin user, default: 6
   --user-invite-count N        Invite codes for new normal users, default: 3
   --file-root PATH             File-management root, default: INSTALL_DIR/data/files
@@ -99,6 +101,7 @@ while [[ $# -gt 0 ]]; do
     --port) PORT="${2:-}"; shift 2 ;;
     --host) HOST="${2:-}"; shift 2 ;;
     --session-timeout-ms) SESSION_TIMEOUT_MS="${2:-}"; shift 2 ;;
+    --reauth-token-ttl-ms) REAUTH_TOKEN_TTL_MS="${2:-}"; shift 2 ;;
     --admin-invite-count) ADMIN_INVITE_COUNT="${2:-}"; shift 2 ;;
     --user-invite-count) USER_INVITE_COUNT="${2:-}"; shift 2 ;;
     --file-root) FILE_ROOT="${2:-}"; shift 2 ;;
@@ -118,6 +121,7 @@ done
 [[ -f "$SOURCE_DIR/package.json" ]] || die "package.json not found in $SOURCE_DIR"
 [[ "$PORT" =~ ^[0-9]+$ ]] || die "--port must be a number"
 [[ "$SESSION_TIMEOUT_MS" =~ ^[0-9]+$ ]] || die "--session-timeout-ms must be a number"
+[[ "$REAUTH_TOKEN_TTL_MS" =~ ^[0-9]+$ ]] || die "--reauth-token-ttl-ms must be a number"
 [[ "$ADMIN_INVITE_COUNT" =~ ^[0-9]+$ ]] || die "--admin-invite-count must be a number"
 [[ "$USER_INVITE_COUNT" =~ ^[0-9]+$ ]] || die "--user-invite-count must be a number"
 [[ "$MAX_UPLOAD_BYTES" =~ ^[0-9]+$ ]] || die "--max-upload-bytes must be a number"
@@ -224,6 +228,9 @@ cat >"$INSTALL_DIR/config/local.json" <<EOF
   },
   "session": {
     "timeoutMs": $SESSION_TIMEOUT_MS
+  },
+  "reauth": {
+    "tokenTtlMs": $REAUTH_TOKEN_TTL_MS
   },
   "registration": {
     "adminInviteCount": $ADMIN_INVITE_COUNT,

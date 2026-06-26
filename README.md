@@ -153,6 +153,9 @@ npm start
   "resources": {
     "allowUsers": true
   },
+  "reauth": {
+    "tokenTtlMs": 1800000
+  },
   "remote": {
     "allowPublicDirectHosts": []
   },
@@ -168,6 +171,7 @@ npm start
 PORTAL_HOST=127.0.0.1
 PORTAL_PORT=8088
 PORTAL_SESSION_TIMEOUT_MS=28800000
+PORTAL_REAUTH_TOKEN_TTL_MS=1800000
 PORTAL_ADMIN_INVITE_COUNT=6
 PORTAL_USER_INVITE_COUNT=3
 PORTAL_FILE_ROOT=/opt/server-portal/data/files
@@ -179,6 +183,18 @@ PORTAL_DATA_ROOT=/opt/server-portal/data
 ```
 
 ## 远程会话配置说明
+
+远程连接、远程会话配置和文件敏感操作会要求二次认证。二次认证 token 默认有效期为 30 分钟：
+
+```json
+{
+  "reauth": {
+    "tokenTtlMs": 1800000
+  }
+}
+```
+
+如果系统中存在启用状态的 `auth2` 用户，二次认证统一验证 `auth2` 的密码；否则验证当前登录用户自己的密码。
 
 如果要连接 Web 应用所在服务器本身，推荐配置：
 

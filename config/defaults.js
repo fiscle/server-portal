@@ -25,6 +25,9 @@ module.exports = {
   resources: {
     allowUsers: true
   },
+  reauth: {
+    tokenTtlMs: 30 * 60 * 1000
+  },
   remote: {
     allowPublicDirectHosts: []
   },

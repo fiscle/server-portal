@@ -86,6 +86,7 @@ sudo ./deploy-systemd.sh \
   --host 127.0.0.1 \
   --port 8088 \
   --session-timeout-ms 28800000 \
+  --reauth-token-ttl-ms 1800000 \
   --admin-invite-count 6 \
   --user-invite-count 3 \
   --file-root /data/server-portal/files \
@@ -99,6 +100,7 @@ sudo ./deploy-systemd.sh \
 - `--host`：Node.js 应用监听地址，生产环境建议 `127.0.0.1`。
 - `--port`：Node.js 应用监听端口。
 - `--session-timeout-ms`：登录会话超时时间，单位毫秒。
+- `--reauth-token-ttl-ms`：二次认证 token 有效期，单位毫秒，默认 `1800000`，即 30 分钟。
 - `--admin-invite-count`：首位管理员默认推荐码数量。
 - `--user-invite-count`：新注册普通用户默认推荐码数量。
 - `--file-root`：文件管理根目录。
@@ -211,6 +213,42 @@ sudo ./factory-reset.sh --yes
 尤其要保护 `remote-master.key`。如果丢失，已经保存的远程会话密码或私钥将无法解密。
 
 ## 10. 常见问题
+
+### 二次认证有效期怎样配置
+
+远程连接、远程会话配置和文件敏感操作会要求二次认证。默认有效期为 30 分钟：
+
+```text
+1800000 毫秒
+```
+
+部署时可配置：
+
+```bash
+sudo ./deploy-systemd.sh \
+  --domain portal.example.com \
+  --cert-file /etc/ssl/portal/fullchain.pem \
+  --key-file /etc/ssl/portal/privkey.pem \
+  --reauth-token-ttl-ms 1800000
+```
+
+也可以在 `/opt/server-portal/config/local.json` 中配置：
+
+```json
+{
+  "reauth": {
+    "tokenTtlMs": 1800000
+  }
+}
+```
+
+修改配置后重启服务：
+
+```bash
+systemctl restart server-portal
+```
+
+如果系统中存在启用状态的 `auth2` 用户，二次认证统一验证 `auth2` 的密码；否则验证当前登录用户自己的密码。
 
 ### 远程会话想连接 Web 服务器本身，主机地址怎样填
 

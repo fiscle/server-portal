@@ -18,6 +18,12 @@
   "resources": {
     "allowUsers": true
   },
+  "reauth": {
+    "tokenTtlMs": 1800000
+  },
+  "remote": {
+    "allowPublicDirectHosts": []
+  },
   "data": {
     "root": "./data"
   }

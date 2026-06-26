@@ -60,6 +60,7 @@ config.files.root = resolvePath(process.env.FILE_ROOT || process.env.PORTAL_FILE
 config.files.maxUploadBytes = numberEnv('MAX_UPLOAD_BYTES', numberEnv('PORTAL_MAX_UPLOAD_BYTES', config.files.maxUploadBytes));
 config.files.maxUploadFiles = numberEnv('MAX_UPLOAD_FILES', numberEnv('PORTAL_MAX_UPLOAD_FILES', config.files.maxUploadFiles));
 config.resources.allowUsers = booleanEnv('RESOURCES_ALLOW_USERS', booleanEnv('PORTAL_RESOURCES_ALLOW_USERS', config.resources.allowUsers));
+config.reauth.tokenTtlMs = numberEnv('REAUTH_TOKEN_TTL_MS', numberEnv('PORTAL_REAUTH_TOKEN_TTL_MS', config.reauth.tokenTtlMs));
 config.remote.allowPublicDirectHosts = listEnv('REMOTE_ALLOW_PUBLIC_DIRECT_HOSTS', listEnv('PORTAL_REMOTE_ALLOW_PUBLIC_DIRECT_HOSTS', config.remote.allowPublicDirectHosts || []));
 config.data.root = resolvePath(process.env.DATA_ROOT || process.env.PORTAL_DATA_ROOT || config.data.root);
 
