@@ -1075,7 +1075,7 @@ app.post('/api/remote-reauth', auth, rateLimit('remote-reauth', 30, 10 * 60 * 10
   if (!passwordCheck.ok) {
     recordRemoteReauthFailure(req.user, purpose, req);
     audit(req.user.username, 'REMOTE_REAUTH_FAILED', purpose === 'remote-connect' ? sessionId : purpose, req);
-    return res.status(401).json({ error: '二次认证密码不正确' });
+    return res.status(400).json({ error: '二次认证密码不正确' });
   }
   if (purpose === 'remote-admin') {
     if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可配置远程会话' });
@@ -1451,7 +1451,7 @@ wss.on('connection', (ws, req) => {
           userInAllowedGroup(req.user.groupPath, savedSession.allowedGroupPaths)
         );
       if (!authorized) return ws.send(JSON.stringify({ type: 'error', message: '远程会话不存在或未授权' }));
-      if (!verifyRemoteReauthToken(req, req.user, 'remote-connect', savedSession.id, message.reauthToken, true)) {
+      if (!verifyRemoteReauthToken(req, req.user, 'remote-connect', savedSession.id, message.reauthToken, false)) {
         audit(req.user.username, 'REMOTE_REAUTH_TOKEN_INVALID', savedSession.name, req);
         return ws.send(JSON.stringify({ type: 'error', message: '远程会话二次认证已失效，请重新连接' }));
       }

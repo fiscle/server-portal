@@ -13,6 +13,7 @@ let remoteAdminQuery = '';
 let remoteAdminGroup = '';
 let remoteAdminReauthToken = '';
 let fileReauthToken = '';
+const remoteConnectReauthTokens = new Map();
 let auditPage = 1;
 let auditQuery = '';
 let auditUsername = '';
@@ -53,6 +54,9 @@ function redirectToLogin(message = '登录已超时，请重新登录') {
     socket = null;
   }
   me = null;
+  remoteAdminReauthToken = '';
+  fileReauthToken = '';
+  remoteConnectReauthTokens.clear();
   $('#auth-view').hidden = false;
   $('#app-view').hidden = true;
   try { $('#modal').close(); } catch (_) {}
@@ -791,7 +795,7 @@ async function loadRemoteSessions() {
 }
 
 async function openRemoteSessionManager(page = remoteAdminPage, authenticated = false) {
-  if (!authenticated) {
+  if (!authenticated && !remoteAdminReauthToken) {
     remoteAdminReauthToken = await requestRemoteReauth({
       purpose: 'admin',
       title: '配置会话二次验证',
@@ -880,7 +884,10 @@ async function loadAdminRemoteSessions(page = remoteAdminPage) {
     });
     $('#remote-admin-pagination').innerHTML = `<span>共 ${data.pagination.total} 条</span><button data-remote-page="${data.pagination.page - 1}"${data.pagination.page <= 1 ? ' disabled' : ''}>‹</button><span>${data.pagination.page} / ${data.pagination.totalPages}</span><button data-remote-page="${data.pagination.page + 1}"${data.pagination.page >= data.pagination.totalPages ? ' disabled' : ''}>›</button>`;
     $$('[data-remote-page]').forEach(button => button.onclick = () => loadAdminRemoteSessions(Number(button.dataset.remotePage)));
-  } catch (error) { toast(error.message, true); }
+  } catch (error) {
+    if (String(error.message || '').includes('二次认证')) remoteAdminReauthToken = '';
+    toast(error.message, true);
+  }
 }
 
 async function openRemoteSessionForm(item = null) {
@@ -953,12 +960,16 @@ async function connectRemoteSession(sessionId, name, credentialRequired = false)
   let reauthToken = '';
   let sshPassword = '';
   try {
-    reauthToken = await requestRemoteReauth({
-      purpose: 'connect',
-      sessionId,
-      title: '远程连接二次验证',
-      description: `即将连接远程会话「${name}」。为了保护服务器 Shell，请输入二次认证密码。`
-    });
+    reauthToken = remoteConnectReauthTokens.get(sessionId);
+    if (!reauthToken) {
+      reauthToken = await requestRemoteReauth({
+        purpose: 'connect',
+        sessionId,
+        title: '远程连接二次验证',
+        description: `即将连接远程会话「${name}」。为了保护服务器 Shell，请输入二次认证密码。`
+      });
+      remoteConnectReauthTokens.set(sessionId, reauthToken);
+    }
     if (credentialRequired) sshPassword = await requestTemporarySshPassword(name);
   } catch (error) {
     toast(error.message, true);
@@ -973,7 +984,11 @@ async function connectRemoteSession(sessionId, name, credentialRequired = false)
     const message = JSON.parse(event.data);
     if (message.type === 'data') terminal.write(message.data);
     if (message.type === 'ready') { $('#terminal-title').textContent = `${message.name} · ${message.target}`; terminal.focus(); toast('SSH 已连接'); }
-    if (message.type === 'error') { terminal.writeln(`\r\n\x1b[31m连接失败：${message.message}\x1b[0m`); toast(message.message, true); }
+    if (message.type === 'error') {
+      if (String(message.message || '').includes('二次认证')) remoteConnectReauthTokens.delete(sessionId);
+      terminal.writeln(`\r\n\x1b[31m连接失败：${message.message}\x1b[0m`);
+      toast(message.message, true);
+    }
   };
   socket.onclose = () => { terminal.writeln('\r\n\x1b[90m连接已断开\x1b[0m'); $('#terminal-title').textContent = '尚未连接'; };
 }
