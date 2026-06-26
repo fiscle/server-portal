@@ -454,6 +454,32 @@ function requestRemoteReauth({ purpose, sessionId = '', title = '远程会话二
   });
 }
 
+function requestTemporarySshPassword(name) {
+  return new Promise((resolve, reject) => {
+    showModal('本次 SSH 登录密码', `<form id="ssh-password-form">
+      <p class="form-help">会话「${escapeHtml(name)}」未保存 SSH 密码。请输入本次连接使用的 SSH 登录密码；密码只用于本次连接，不会保存。</p>
+      <label>SSH 登录密码<input name="password" type="password" autocomplete="off" required autofocus></label>
+      <button class="primary">开始连接</button>
+    </form>`);
+    const modal = $('#modal');
+    let settled = false;
+    const cleanup = () => modal.removeEventListener('close', onClose);
+    const onClose = () => {
+      cleanup();
+      if (!settled) reject(new Error('已取消 SSH 密码输入'));
+    };
+    modal.addEventListener('close', onClose);
+    $('#ssh-password-form').onsubmit = event => {
+      event.preventDefault();
+      const password = String(new FormData(event.target).get('password') || '');
+      settled = true;
+      cleanup();
+      modal.close();
+      resolve(password);
+    };
+  });
+}
+
 async function ensureFileReauthToken(description = '文件上传、下载、删除等敏感操作需要二次认证。') {
   if (fileReauthToken) return fileReauthToken;
   fileReauthToken = await requestRemoteReauth({
@@ -750,8 +776,8 @@ function renderSessionItems(sessions) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(item);
   });
-  return [...groups.entries()].map(([group, items]) => `<section class="session-group"><div class="session-group-title"><span>${remoteGroupLabel(group)}</span><em>${items.length} 个会话</em></div>${items.map(item => `<button class="session-item connect-session" data-id="${item.id}" data-name="${escapeHtml(item.name)}">
-      <i>⌘</i><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.username)}@${escapeHtml(item.host)}:${item.port}${item.connectionMode === 'jump' ? ` · 经由 ${escapeHtml(item.jumpSessionName || '跳板会话')}` : ''}</small></span><em>连接 ›</em>
+  return [...groups.entries()].map(([group, items]) => `<section class="session-group"><div class="session-group-title"><span>${remoteGroupLabel(group)}</span><em>${items.length} 个会话</em></div>${items.map(item => `<button class="session-item connect-session" data-id="${item.id}" data-name="${escapeHtml(item.name)}" data-credential-required="${item.credentialRequired ? '1' : '0'}">
+      <i>⌘</i><span><b>${escapeHtml(item.name)}</b><small>${escapeHtml(item.username)}@${escapeHtml(item.host)}:${item.port}${item.connectionMode === 'jump' ? ` · 经由 ${escapeHtml(item.jumpSessionName || '跳板会话')}` : ''}${item.credentialRequired ? ' · 连接时输入密码' : ''}</small></span><em>连接 ›</em>
     </button>`).join('')}</section>`).join('');
 }
 
@@ -759,7 +785,7 @@ async function loadRemoteSessions() {
   try {
     const sessions = (await api('/api/remote-sessions')).sessions;
     $('#remote-session-list').innerHTML = renderSessionItems(sessions);
-    $$('.connect-session').forEach(button => button.onclick = () => connectRemoteSession(button.dataset.id, button.dataset.name));
+    $$('.connect-session').forEach(button => button.onclick = () => connectRemoteSession(button.dataset.id, button.dataset.name, button.dataset.credentialRequired === '1'));
     if (me.role === 'admin') $('#add-remote-session').hidden = false;
   } catch (error) { toast(error.message, true); }
 }
@@ -873,7 +899,7 @@ async function openRemoteSessionForm(item = null) {
       <div class="two"><label>连接方式<select name="connectionMode"><option value="direct"${connectionMode !== 'jump' ? ' selected' : ''}>直接连接</option><option value="jump"${connectionMode === 'jump' ? ' selected' : ''}>通过跳板会话</option></select></label>
       <label class="jump-session-field">跳板会话<select name="jumpSessionId"><option value="">请选择跳板会话</option>${jumpSessions.map(session => `<option value="${session.id}"${item?.jumpSessionId === session.id ? ' selected' : ''}>${escapeHtml(session.groupPath ? `${session.groupPath}/` : '')}${escapeHtml(session.name)}（${escapeHtml(session.username)}@${escapeHtml(session.host)}:${session.port}）</option>`).join('')}</select></label></div>
       <label>认证方式<select name="authType"><option value="password"${item?.authType !== 'privateKey' ? ' selected' : ''}>密码</option><option value="privateKey"${item?.authType === 'privateKey' ? ' selected' : ''}>私钥</option></select></label>
-      <label class="credential-password">登录密码<input name="passwordCredential" type="password" placeholder="${item ? '留空则保持原密码' : '请输入 SSH 登录密码'}"></label>
+      <label class="credential-password">登录密码<input name="passwordCredential" type="password" placeholder="${item ? '留空则保持原密码；清空仅适用于未作为跳板的最终目标' : '可留空，连接时由用户临时输入'}"><small class="form-help">如果该会话要作为跳板使用，必须保存密码或私钥；最终目标可留空并在连接时输入。</small></label>
       <label class="credential-private">SSH 私钥<textarea name="privateKeyCredential" rows="6" placeholder="${item ? '留空则保持原私钥' : '-----BEGIN OPENSSH PRIVATE KEY-----'}"></textarea></label>
       <label>授权用户组<div class="user-grants group-grants">${groups.length ? groups.map(group => `<label><input type="checkbox" name="allowedGroupPaths" value="${escapeHtml(group)}"${selectedGroups.has(group) ? ' checked' : ''}> ${escapeHtml(group)}</label>`).join('') : '<p class="empty-mini">暂无用户组，可先在用户管理中设置用户组</p>'}</div><small class="form-help">授权给上级组时，子组用户也会获得会话权限，例如“运维”包含“运维/一线”。</small></label>
       <label>授权用户<div class="user-grants">${users.map(user => `<label><input type="checkbox" name="allowedUserIds" value="${user.id}"${selected.has(user.id) ? ' checked' : ''}> ${escapeHtml(user.displayName)} (@${escapeHtml(user.username)})</label>`).join('')}</div></label>
@@ -921,15 +947,17 @@ function editRemoteSession(item) { openRemoteSessionForm(item); }
 $('#add-remote-session').onclick = async () => {
   try { await openRemoteSessionManager(1); } catch (error) { toast(error.message, true); }
 };
-async function connectRemoteSession(sessionId, name) {
+async function connectRemoteSession(sessionId, name, credentialRequired = false) {
   let reauthToken = '';
+  let sshPassword = '';
   try {
     reauthToken = await requestRemoteReauth({
       purpose: 'connect',
       sessionId,
       title: '远程连接二次验证',
-      description: `即将连接远程会话「${name}」。为了保护服务器 Shell，请输入当前账号密码。`
+      description: `即将连接远程会话「${name}」。为了保护服务器 Shell，请输入二次认证密码。`
     });
+    if (credentialRequired) sshPassword = await requestTemporarySshPassword(name);
   } catch (error) {
     toast(error.message, true);
     return;
@@ -938,7 +966,7 @@ async function connectRemoteSession(sessionId, name) {
   terminal.clear();
   terminal.writeln(`\x1b[33m正在连接会话「${name}」...\x1b[0m`);
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/terminal`);
-  socket.onopen = () => socket.send(JSON.stringify({ type: 'connect', sessionId, reauthToken, cols: terminal.cols, rows: terminal.rows }));
+  socket.onopen = () => socket.send(JSON.stringify({ type: 'connect', sessionId, reauthToken, sshPassword, cols: terminal.cols, rows: terminal.rows }));
   socket.onmessage = event => {
     const message = JSON.parse(event.data);
     if (message.type === 'data') terminal.write(message.data);

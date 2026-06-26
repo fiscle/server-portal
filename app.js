@@ -217,6 +217,7 @@ function remoteSessionView(item, users, includeGrants = false) {
     authType: item.authType,
     connectionMode: item.connectionMode === 'jump' ? 'jump' : 'direct',
     jumpSessionId: item.jumpSessionId || '',
+    credentialRequired: item.authType === 'password' && !item.credential,
     active: item.active,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt
@@ -293,15 +294,24 @@ function hasJumpCycle(remoteSessions, sessionId, jumpSessionId) {
   return false;
 }
 
+function hasSavedCredential(session) {
+  return Boolean(session && session.credential);
+}
+
+function isUsedAsJump(remoteSessions, sessionId) {
+  return remoteSessions.some(item => item.jumpSessionId === sessionId);
+}
+
 function validateRemoteSessionInput({ name, host, port, username, credential, authType, connectionMode, jumpSessionId, remoteSessions, sessionId = '' }) {
   if (!name || name.length > 60) return '会话名称不能为空且不能超过 60 个字符';
   if (!isValidSshHost(host)) return '主机地址无效';
   if (connectionMode === 'direct' && !isPrivateHost(host) && !isPublicDirectHostAllowed(host)) return '直接连接仅允许配置本机、内网 IP 或已加入白名单的公网地址；访问本服务器建议填写 127.0.0.1';
   if (!username || port < 1 || port > 65535) return '主机、端口或用户名无效';
-  if (credential === '') return authType === 'privateKey' ? '请输入私钥' : '请输入密码';
+  if (authType === 'privateKey' && credential === '') return '请输入私钥';
   if (connectionMode === 'jump') {
     const jumpSession = remoteSessions.find(item => item.id === jumpSessionId && item.active);
     if (!jumpSession) return '请选择有效的跳板会话';
+    if (!hasSavedCredential(jumpSession)) return '所选跳板会话必须保存密码或私钥，不能使用连接时临时输入';
     if (sessionId && jumpSessionId === sessionId) return '不能选择自身作为跳板会话';
     if (hasJumpCycle(remoteSessions, sessionId, jumpSessionId)) return '跳板会话不能形成循环引用';
   }
@@ -1105,7 +1115,7 @@ app.get('/api/admin/remote-sessions', auth, adminOnly, remoteAdminReauth, (req, 
 app.get('/api/admin/remote-session-options', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const excludeId = String(req.query.excludeId || '');
   const sessions = readRemoteSessions()
-    .filter(item => item.active && item.id !== excludeId)
+    .filter(item => item.active && item.id !== excludeId && hasSavedCredential(item))
     .sort((a, b) => `${a.groupPath || ''}/${a.name || ''}`.localeCompare(`${b.groupPath || ''}/${b.name || ''}`, 'zh-CN'))
     .map(item => ({
       id: item.id,
@@ -1139,7 +1149,7 @@ app.post('/api/admin/remote-sessions', auth, adminOnly, remoteAdminReauth, (req,
   const item = {
     id: crypto.randomUUID(),
     name, groupPath, host, port, username, authType, connectionMode, jumpSessionId,
-    credential: encryptSecret(credential),
+    credential: credential ? encryptSecret(credential) : null,
     allowedUserIds,
     allowedGroupPaths,
     active: req.body.active !== false,
@@ -1163,10 +1173,11 @@ app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, 
   const port = Number(req.body.port || 22);
   const username = String(req.body.username || '').trim();
   const authType = req.body.authType === 'privateKey' ? 'privateKey' : 'password';
+  const previousAuthType = item.authType;
   const connectionMode = normalizeConnectionMode(req.body.connectionMode);
   const jumpSessionId = normalizeJumpSessionId(req.body.jumpSessionId, connectionMode);
   const credential = typeof req.body.credential === 'string' ? req.body.credential : '';
-  const requiresCredential = authType !== item.authType && !credential;
+  const requiresCredential = authType === 'privateKey' && authType !== item.authType && !credential;
   const validationError = validateRemoteSessionInput({
     name,
     host,
@@ -1186,7 +1197,14 @@ app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, 
   item.port = port;
   item.username = username;
   if (requiresCredential) {
-    return res.status(400).json({ error: '切换认证方式时必须填写新的凭据' });
+    return res.status(400).json({ error: '切换为私钥认证时必须填写新的私钥' });
+  }
+  const willHaveCredential = credential ? true : authType === previousAuthType && Boolean(item.credential);
+  if (authType === 'privateKey' && !willHaveCredential) {
+    return res.status(400).json({ error: '私钥认证必须保存私钥' });
+  }
+  if (authType === 'password' && !willHaveCredential && isUsedAsJump(remoteSessions, item.id)) {
+    return res.status(400).json({ error: '该会话正在作为跳板使用，必须保存 SSH 密码' });
   }
   item.authType = authType;
   item.connectionMode = connectionMode;
@@ -1196,6 +1214,7 @@ app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, 
   item.allowedGroupPaths = [...new Set(Array.isArray(req.body.allowedGroupPaths) ? req.body.allowedGroupPaths.map(normalizeUserGroupPath) : [])].filter(Boolean);
   item.active = req.body.active !== false;
   if (credential) item.credential = encryptSecret(credential);
+  else if (authType !== previousAuthType) item.credential = null;
   item.updatedAt = new Date().toISOString();
   writeRemoteSessions(remoteSessions);
   audit(req.user.username, 'REMOTE_SESSION_UPDATED', `${groupPath ? `${groupPath}/` : ''}${name} ${username}@${host}:${port}${connectionMode === 'jump' ? ` via ${jumpSessionId}` : ''}`, req);
@@ -1344,17 +1363,18 @@ function isPrivateHost(host) {
   return version === 6 && (host === '::1' || host.toLowerCase().startsWith('fd') || host.toLowerCase().startsWith('fc'));
 }
 
-function buildSshConfig(savedSession, sock = null) {
+function buildSshConfig(savedSession, sock = null, runtimeCredential = '') {
   const { host, port, username } = savedSession;
   const sshConfig = { host, port, username, readyTimeout: 12000, keepaliveInterval: 10000 };
   if (sock) sshConfig.sock = sock;
-  const credential = decryptSecret(savedSession.credential);
+  const credential = savedSession.credential ? decryptSecret(savedSession.credential) : runtimeCredential;
+  if (!credential) throw new Error(savedSession.authType === 'privateKey' ? 'SSH 私钥未配置' : '请输入本次 SSH 登录密码');
   if (savedSession.authType === 'privateKey') sshConfig.privateKey = credential;
   else sshConfig.password = credential;
   return sshConfig;
 }
 
-function connectSshClient(savedSession, sock = null) {
+function connectSshClient(savedSession, sock = null, runtimeCredential = '') {
   return new Promise((resolve, reject) => {
     const sshClient = new Client();
     let settled = false;
@@ -1366,7 +1386,7 @@ function connectSshClient(savedSession, sock = null) {
       if (!settled) reject(error);
     });
     try {
-      sshClient.connect(buildSshConfig(savedSession, sock));
+      sshClient.connect(buildSshConfig(savedSession, sock, runtimeCredential));
     } catch (error) {
       reject(error);
     }
@@ -1382,7 +1402,7 @@ function forwardThroughJump(jumpClient, targetSession) {
   });
 }
 
-async function openSshSession(savedSession, allRemoteSessions, depth = 0, visited = new Set()) {
+async function openSshSession(savedSession, allRemoteSessions, depth = 0, visited = new Set(), runtimeCredentials = new Map()) {
   if (depth > 3) throw new Error('跳板层级过深，最多支持 3 层');
   if (visited.has(savedSession.id)) throw new Error('跳板会话存在循环引用');
   visited.add(savedSession.id);
@@ -1390,9 +1410,9 @@ async function openSshSession(savedSession, allRemoteSessions, depth = 0, visite
   if (savedSession.connectionMode === 'jump') {
     const jumpSession = allRemoteSessions.find(item => item.id === savedSession.jumpSessionId && item.active);
     if (!jumpSession) throw new Error('跳板会话不存在或未启用');
-    const jump = await openSshSession(jumpSession, allRemoteSessions, depth + 1, visited);
+    const jump = await openSshSession(jumpSession, allRemoteSessions, depth + 1, visited, runtimeCredentials);
     const tunnel = await forwardThroughJump(jump.client, savedSession);
-    const client = await connectSshClient(savedSession, tunnel);
+    const client = await connectSshClient(savedSession, tunnel, runtimeCredentials.get(savedSession.id) || '');
     return {
       client,
       chain: [client, ...jump.chain],
@@ -1400,7 +1420,7 @@ async function openSshSession(savedSession, allRemoteSessions, depth = 0, visite
     };
   }
 
-  const client = await connectSshClient(savedSession);
+  const client = await connectSshClient(savedSession, null, runtimeCredentials.get(savedSession.id) || '');
   return { client, chain: [client], via: [] };
 }
 
@@ -1439,7 +1459,13 @@ wss.on('connection', (ws, req) => {
       const { host, port, username } = savedSession;
       connected = true;
       try {
-        const opened = await openSshSession(savedSession, allRemoteSessions);
+        const runtimeCredentials = new Map();
+        if (!savedSession.credential) {
+          const sshPassword = String(message.sshPassword || '');
+          if (savedSession.authType !== 'password' || !sshPassword) throw new Error('请输入本次 SSH 登录密码');
+          runtimeCredentials.set(savedSession.id, sshPassword);
+        }
+        const opened = await openSshSession(savedSession, allRemoteSessions, 0, new Set(), runtimeCredentials);
         client = opened.client;
         chainClients = opened.chain;
         client.on('error', error => {
