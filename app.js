@@ -1,4 +1,4 @@
-'use strict';
+﻿'use strict';
 
 const crypto = require('crypto');
 const fs = require('fs');
@@ -445,9 +445,22 @@ function clearRemoteReauthFailures(user, purpose, req) {
   remoteReauthFailures.delete(remoteReauthFailureKey(user, purpose, req));
 }
 
+function remoteReauthVerifier(user) {
+  const auth2 = visibleUsers(readUsers()).find(item => item.active && item.username.toLowerCase() === 'auth2');
+  return auth2 || user;
+}
+
+function verifyRemoteReauthPassword(password, user) {
+  const verifier = remoteReauthVerifier(user);
+  return {
+    ok: verifyPassword(password, verifier),
+    verifier
+  };
+}
+
 function createRemoteReauthToken(req, user, purpose, sessionId = '') {
   const token = crypto.randomBytes(32).toString('hex');
-  const ttlMs = purpose === 'remote-admin' ? 5 * 60 * 1000 : 90 * 1000;
+  const ttlMs = purpose === 'remote-connect' ? 90 * 1000 : 5 * 60 * 1000;
   remoteReauthTokens.set(token, {
     userId: user.id,
     sid: cookies(req).sid || '',
@@ -477,6 +490,15 @@ function remoteAdminReauth(req, res, next) {
   if (!verifyRemoteReauthToken(req, req.user, 'remote-admin', '', token, false)) {
     audit(req.user.username, 'REMOTE_ADMIN_REAUTH_REQUIRED', req.path, req);
     return res.status(403).json({ error: '远程会话配置需要二次认证，请重新打开配置会话' });
+  }
+  next();
+}
+
+function fileReauth(req, res, next) {
+  const token = req.headers['x-file-reauth-token'] || req.headers['x-reauth-token'] || req.query.reauthToken || req.body?.reauthToken;
+  if (!verifyRemoteReauthToken(req, req.user, 'file', '', token, false)) {
+    audit(req.user.username, 'FILE_REAUTH_REQUIRED', req.path, req);
+    return res.status(403).json({ error: '文件操作需要二次认证，请重新验证后再试' });
   }
   next();
 }
@@ -1027,30 +1049,35 @@ function canUseRemoteSession(user, savedSession) {
 }
 
 app.post('/api/remote-reauth', auth, rateLimit('remote-reauth', 30, 10 * 60 * 1000), (req, res) => {
-  const purpose = req.body.purpose === 'admin' || req.body.purpose === 'remote-admin' ? 'remote-admin' : 'remote-connect';
+  const requestedPurpose = String(req.body.purpose || '');
+  const purpose = requestedPurpose === 'admin' || requestedPurpose === 'remote-admin'
+    ? 'remote-admin'
+    : requestedPurpose === 'file' || requestedPurpose === 'file-access'
+      ? 'file'
+      : 'remote-connect';
   const sessionId = String(req.body.sessionId || '');
   const password = String(req.body.password || '');
   if (remoteReauthLocked(req.user, purpose, req)) {
     audit(req.user.username, 'REMOTE_REAUTH_LOCKED', purpose, req);
     return res.status(429).json({ error: '二次认证失败次数过多，请 10 分钟后再试' });
   }
-  if (!verifyPassword(password, req.user)) {
+  const passwordCheck = verifyRemoteReauthPassword(password, req.user);
+  if (!passwordCheck.ok) {
     recordRemoteReauthFailure(req.user, purpose, req);
-    audit(req.user.username, 'REMOTE_REAUTH_FAILED', purpose === 'remote-connect' ? sessionId : 'remote-admin', req);
+    audit(req.user.username, 'REMOTE_REAUTH_FAILED', purpose === 'remote-connect' ? sessionId : purpose, req);
     return res.status(401).json({ error: '二次认证密码不正确' });
   }
   if (purpose === 'remote-admin') {
     if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可配置远程会话' });
-  } else {
+  } else if (purpose === 'remote-connect') {
     const savedSession = readRemoteSessions().find(item => item.id === sessionId);
     if (!canUseRemoteSession(req.user, savedSession)) return res.status(403).json({ error: '远程会话不存在或未授权' });
   }
   clearRemoteReauthFailures(req.user, purpose, req);
   const token = createRemoteReauthToken(req, req.user, purpose, purpose === 'remote-connect' ? sessionId : '');
-  audit(req.user.username, 'REMOTE_REAUTH_SUCCESS', purpose === 'remote-connect' ? sessionId : 'remote-admin', req);
+  audit(req.user.username, 'REMOTE_REAUTH_SUCCESS', `${purpose === 'remote-connect' ? sessionId : purpose} verifier=${passwordCheck.verifier.username}`, req);
   res.json(token);
 });
-
 app.get('/api/admin/remote-sessions', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const users = readUsers();
   const query = String(req.query.q || '').trim().toLowerCase();
@@ -1230,6 +1257,10 @@ function publicFileName(name, scope, relative, users) {
 app.get('/api/files', auth, async (req, res) => {
   try {
     const scope = fileScope(req);
+    if (scope === 'all' && !verifyRemoteReauthToken(req, req.user, 'file', '', req.headers['x-file-reauth-token'] || req.headers['x-reauth-token'] || req.query.reauthToken, false)) {
+      audit(req.user.username, 'FILE_REAUTH_REQUIRED', 'list-all-users', req);
+      return res.status(403).json({ error: '查看全部用户文件需要二次认证' });
+    }
     const relative = safeRelative(req.query.path || '');
     const target = filePathForScope(req.user, scope, relative);
     if (scope === 'all' && !relative) {
@@ -1261,12 +1292,12 @@ const upload = multer({
   limits: { fileSize: config.files.maxUploadBytes, files: config.files.maxUploadFiles }
 });
 
-app.post('/api/files/upload', auth, upload.array('files', 10), (req, res) => {
+app.post('/api/files/upload', auth, fileReauth, upload.array('files', 10), (req, res) => {
   audit(req.user.username, 'FILES_UPLOADED', `${fileScope(req)}:${safeRelative(req.query.path || '') || '/'} ${(req.files || []).map(f => f.filename).join(',')}`, req);
   res.json({ message: `已上传 ${(req.files || []).length} 个文件` });
 });
 
-app.post('/api/files/folder', auth, async (req, res) => {
+app.post('/api/files/folder', auth, fileReauth, async (req, res) => {
   try {
     const scope = req.user.role === 'admin' && req.body.scope === 'all' ? 'all' : 'mine';
     const relative = safeRelative(req.body.path || '');
@@ -1279,7 +1310,7 @@ app.post('/api/files/folder', auth, async (req, res) => {
   } catch (error) { res.status(400).json({ error: error.code === 'EEXIST' ? '文件夹已存在' : error.message }); }
 });
 
-app.get('/api/files/download', auth, (req, res) => {
+app.get('/api/files/download', auth, fileReauth, (req, res) => {
   try {
     const scope = fileScope(req);
     const target = filePathForScope(req.user, scope, req.query.path || '');
@@ -1289,7 +1320,7 @@ app.get('/api/files/download', auth, (req, res) => {
   } catch (error) { res.status(400).json({ error: error.message }); }
 });
 
-app.delete('/api/files', auth, async (req, res) => {
+app.delete('/api/files', auth, fileReauth, async (req, res) => {
   try {
     const scope = fileScope(req);
     const relative = safeRelative(req.query.path || '');

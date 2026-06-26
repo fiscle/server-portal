@@ -12,6 +12,7 @@ let remoteAdminPage = 1;
 let remoteAdminQuery = '';
 let remoteAdminGroup = '';
 let remoteAdminReauthToken = '';
+let fileReauthToken = '';
 let auditPage = 1;
 let auditQuery = '';
 let auditUsername = '';
@@ -418,11 +419,11 @@ function remoteAdminHeaders(extra = {}) {
   return { ...extra, 'X-Remote-Reauth-Token': remoteAdminReauthToken };
 }
 
-function requestRemoteReauth({ purpose, sessionId = '', title = '远程会话二次验证', description = '为了保护服务器 Shell，请输入当前账号密码后继续。' }) {
+function requestRemoteReauth({ purpose, sessionId = '', title = '远程会话二次验证', description = '为了保护服务器 Shell，请输入二次认证密码后继续。' }) {
   return new Promise((resolve, reject) => {
     showModal(title, `<form id="remote-reauth-form">
       <p class="form-help">${escapeHtml(description)}</p>
-      <label>当前账号密码<input name="password" type="password" autocomplete="current-password" required autofocus></label>
+      <label>二次认证密码<input name="password" type="password" autocomplete="current-password" required autofocus></label>
       <button class="primary">确认继续</button>
     </form>`);
     const modal = $('#modal');
@@ -451,6 +452,16 @@ function requestRemoteReauth({ purpose, sessionId = '', title = '远程会话二
       }
     };
   });
+}
+
+async function ensureFileReauthToken(description = '文件上传、下载、删除等敏感操作需要二次认证。') {
+  if (fileReauthToken) return fileReauthToken;
+  fileReauthToken = await requestRemoteReauth({
+    purpose: 'file',
+    title: '文件操作二次验证',
+    description
+  });
+  return fileReauthToken;
 }
 
 function editUser(user) {
@@ -620,7 +631,10 @@ async function loadResources() {
 
 async function loadFiles(path = currentPath) {
   try {
-    const data = await api(`/api/files?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(path)}`);
+    const token = fileScope === 'all'
+      ? await ensureFileReauthToken('管理员查看全部用户文件需要二次认证。')
+      : '';
+    const data = await api(`/api/files?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(path)}${token ? `&reauthToken=${encodeURIComponent(token)}` : ''}`);
     currentPath = data.path;
     $('#file-scope-toggle').hidden = me.role !== 'admin';
     $('#file-scope-toggle').textContent = fileScope === 'all' ? '只看我的文件' : '查看全部用户文件';
@@ -632,24 +646,47 @@ async function loadFiles(path = currentPath) {
     $('#files-table').innerHTML = `<table><thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th>操作</th></tr></thead><tbody>${rows}${data.items.map(item => {
       const full = [currentPath, item.name].filter(Boolean).join('/');
       const label = item.displayName || item.name;
-      return `<tr><td><div class="file-name"><span class="file-icon">${item.type === 'directory' ? '▰' : '▤'}</span>${item.type === 'directory' ? `<button class="link-btn folder-open" data-path="${escapeHtml(full)}">${escapeHtml(label)}</button>` : escapeHtml(label)}</div></td><td>${item.type === 'directory' ? '—' : fmtSize(item.size)}</td><td>${new Date(item.modifiedAt).toLocaleString()}</td><td>${item.type === 'file' ? `<a class="link-btn" href="/api/files/download?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(full)}">下载</a>` : ''}<button class="link-btn file-delete" data-path="${escapeHtml(full)}">删除</button></td></tr>`;
+      return `<tr><td><div class="file-name"><span class="file-icon">${item.type === 'directory' ? '▰' : '▤'}</span>${item.type === 'directory' ? `<button class="link-btn folder-open" data-path="${escapeHtml(full)}">${escapeHtml(label)}</button>` : escapeHtml(label)}</div></td><td>${item.type === 'directory' ? '—' : fmtSize(item.size)}</td><td>${new Date(item.modifiedAt).toLocaleString()}</td><td>${item.type === 'file' ? `<button class="link-btn file-download" data-path="${escapeHtml(full)}">下载</button>` : ''}<button class="link-btn file-delete" data-path="${escapeHtml(full)}">删除</button></td></tr>`;
     }).join('') || (!currentPath ? `<tr><td colspan="4" class="empty">${fileScope === 'all' ? '暂无用户文件目录' : '还没有文件，拖放一个进来吧'}</td></tr>` : '')}</tbody></table>`;
     $$('.folder-open').forEach(button => button.onclick = () => loadFiles(button.dataset.path));
     $$('.file-delete').forEach(button => button.onclick = async () => {
       if (!confirm('确认删除？非空文件夹不会被删除。')) return;
-      try { await api(`/api/files?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(button.dataset.path)}`, { method: 'DELETE' }); toast('已删除'); loadFiles(); } catch (error) { toast(error.message, true); }
+      try {
+        const token = await ensureFileReauthToken('删除文件需要二次认证。');
+        await api(`/api/files?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(button.dataset.path)}`, { method: 'DELETE', headers: { 'X-File-Reauth-Token': token } });
+        toast('已删除');
+        loadFiles();
+      } catch (error) { toast(error.message, true); }
     });
-  } catch (error) { toast(error.message, true); }
+    $$('.file-download').forEach(button => button.onclick = async () => {
+      try {
+        const token = await ensureFileReauthToken('下载文件需要二次认证。');
+        location.href = `/api/files/download?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(button.dataset.path)}&reauthToken=${encodeURIComponent(token)}`;
+      } catch (error) { toast(error.message, true); }
+    });
+  } catch (error) {
+    if (String(error.message || '').includes('二次认证')) fileReauthToken = '';
+    toast(error.message, true);
+  }
 }
 
 async function uploadFiles(files) {
   if (!files.length) return;
-  const body = new FormData();
-  [...files].forEach(file => body.append('files', file));
-  try { const data = await api(`/api/files/upload?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(currentPath)}`, { method: 'POST', body }); toast(data.message); loadFiles(); } catch (error) { toast(error.message, true); }
+  try {
+    const token = await ensureFileReauthToken('上传文件需要二次认证。');
+    const body = new FormData();
+    [...files].forEach(file => body.append('files', file));
+    const data = await api(`/api/files/upload?scope=${encodeURIComponent(fileScope)}&path=${encodeURIComponent(currentPath)}`, { method: 'POST', headers: { 'X-File-Reauth-Token': token }, body });
+    toast(data.message);
+    loadFiles();
+  } catch (error) { toast(error.message, true); }
 }
 $('#file-upload').onchange = event => uploadFiles(event.target.files);
-$('#file-scope-toggle').onclick = () => {
+$('#file-scope-toggle').onclick = async () => {
+  if (fileScope !== 'all') {
+    try { await ensureFileReauthToken('管理员查看全部用户文件需要二次认证。'); }
+    catch (error) { toast(error.message, true); return; }
+  }
   fileScope = fileScope === 'all' ? 'mine' : 'all';
   currentPath = '';
   loadFiles('');
@@ -684,7 +721,13 @@ $('#new-folder').onclick = () => {
   $('#folder-form').onsubmit = async event => {
     event.preventDefault();
     const name = new FormData(event.target).get('name');
-    try { await api('/api/files/folder', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ scope: fileScope, path: currentPath, name }) }); $('#modal').close(); toast('文件夹已创建'); loadFiles(); } catch (error) { toast(error.message, true); }
+    try {
+      const token = await ensureFileReauthToken('新建文件夹需要二次认证。');
+      await api('/api/files/folder', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-File-Reauth-Token': token }, body: JSON.stringify({ scope: fileScope, path: currentPath, name }) });
+      $('#modal').close();
+      toast('文件夹已创建');
+      loadFiles();
+    } catch (error) { toast(error.message, true); }
   };
 };
 
