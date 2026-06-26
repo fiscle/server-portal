@@ -899,8 +899,9 @@ async function openRemoteSessionForm(item = null) {
       <div class="two"><label>连接方式<select name="connectionMode"><option value="direct"${connectionMode !== 'jump' ? ' selected' : ''}>直接连接</option><option value="jump"${connectionMode === 'jump' ? ' selected' : ''}>通过跳板会话</option></select></label>
       <label class="jump-session-field">跳板会话<select name="jumpSessionId"><option value="">请选择跳板会话</option>${jumpSessions.map(session => `<option value="${session.id}"${item?.jumpSessionId === session.id ? ' selected' : ''}>${escapeHtml(session.groupPath ? `${session.groupPath}/` : '')}${escapeHtml(session.name)}（${escapeHtml(session.username)}@${escapeHtml(session.host)}:${session.port}）</option>`).join('')}</select></label></div>
       <label>认证方式<select name="authType"><option value="password"${item?.authType !== 'privateKey' ? ' selected' : ''}>密码</option><option value="privateKey"${item?.authType === 'privateKey' ? ' selected' : ''}>私钥</option></select></label>
-      <label class="credential-password">登录密码<input name="passwordCredential" type="password" placeholder="${item ? '留空则保持原密码；清空仅适用于未作为跳板的最终目标' : '可留空，连接时由用户临时输入'}"><small class="form-help">如果该会话要作为跳板使用，必须保存密码或私钥；最终目标可留空并在连接时输入。</small></label>
-      <label class="credential-private">SSH 私钥<textarea name="privateKeyCredential" rows="6" placeholder="${item ? '留空则保持原私钥' : '-----BEGIN OPENSSH PRIVATE KEY-----'}"></textarea></label>
+      ${item ? `<label>凭据处理方式<select name="credentialAction"><option value="keep" selected>保持原凭据不变</option><option value="update">更新为下面填写的新凭据</option><option value="clear">清空已保存密码，连接时输入</option></select><small class="form-help">选择“清空”只适用于密码认证的最终目标；作为跳板或私钥认证必须保存凭据。</small></label>` : ''}
+      <label class="credential-password">登录密码<input name="passwordCredential" type="password" placeholder="${item ? '仅在选择“更新凭据”时填写；新增时可留空' : '可留空，连接时由用户临时输入'}"><small class="form-help">如果该会话要作为跳板使用，必须保存密码或私钥；最终目标可留空并在连接时输入。</small></label>
+      <label class="credential-private">SSH 私钥<textarea name="privateKeyCredential" rows="6" placeholder="${item ? '仅在选择“更新凭据”时填写新私钥' : '-----BEGIN OPENSSH PRIVATE KEY-----'}"></textarea></label>
       <label>授权用户组<div class="user-grants group-grants">${groups.length ? groups.map(group => `<label><input type="checkbox" name="allowedGroupPaths" value="${escapeHtml(group)}"${selectedGroups.has(group) ? ' checked' : ''}> ${escapeHtml(group)}</label>`).join('') : '<p class="empty-mini">暂无用户组，可先在用户管理中设置用户组</p>'}</div><small class="form-help">授权给上级组时，子组用户也会获得会话权限，例如“运维”包含“运维/一线”。</small></label>
       <label>授权用户<div class="user-grants">${users.map(user => `<label><input type="checkbox" name="allowedUserIds" value="${user.id}"${selected.has(user.id) ? ' checked' : ''}> ${escapeHtml(user.displayName)} (@${escapeHtml(user.username)})</label>`).join('')}</div></label>
       <label>状态<select name="active"><option value="true"${item?.active !== false ? ' selected' : ''}>启用</option><option value="false"${item?.active === false ? ' selected' : ''}>停用</option></select></label>
@@ -922,6 +923,7 @@ async function openRemoteSessionForm(item = null) {
         username: formData.get('username'), authType,
         connectionMode: formData.get('connectionMode'),
         jumpSessionId: formData.get('jumpSessionId'),
+        credentialAction: item ? formData.get('credentialAction') : 'update',
         credential: formData.get(authType === 'privateKey' ? 'privateKeyCredential' : 'passwordCredential'),
         allowedUserIds: formData.getAll('allowedUserIds'),
         allowedGroupPaths: formData.getAll('allowedGroupPaths'),

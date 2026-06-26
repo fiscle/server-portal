@@ -1177,13 +1177,17 @@ app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, 
   const connectionMode = normalizeConnectionMode(req.body.connectionMode);
   const jumpSessionId = normalizeJumpSessionId(req.body.jumpSessionId, connectionMode);
   const credential = typeof req.body.credential === 'string' ? req.body.credential : '';
-  const requiresCredential = authType === 'privateKey' && authType !== item.authType && !credential;
+  const credentialAction = ['keep', 'update', 'clear'].includes(req.body.credentialAction) ? req.body.credentialAction : (credential ? 'update' : 'keep');
+  const willKeepExisting = credentialAction === 'keep' && authType === previousAuthType;
+  const willUpdateCredential = credentialAction === 'update' && Boolean(credential);
+  const willClearCredential = credentialAction === 'clear' || (credentialAction === 'keep' && authType !== previousAuthType);
+  const validationCredential = authType === 'privateKey' && !willKeepExisting && !willUpdateCredential ? '' : 'ok';
   const validationError = validateRemoteSessionInput({
     name,
     host,
     port,
     username,
-    credential: requiresCredential ? '' : 'keep-existing',
+    credential: validationCredential,
     authType,
     connectionMode,
     jumpSessionId,
@@ -1191,21 +1195,17 @@ app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, 
     sessionId: item.id
   });
   if (validationError) return res.status(400).json({ error: validationError });
+  if (credentialAction === 'update' && !credential) return res.status(400).json({ error: '请选择更新凭据时必须填写新密码或新私钥' });
+  const willHaveCredential = willUpdateCredential || (willKeepExisting && Boolean(item.credential));
+  if (authType === 'privateKey' && !willHaveCredential) return res.status(400).json({ error: '私钥认证必须保存私钥' });
+  if (authType === 'password' && !willHaveCredential && isUsedAsJump(remoteSessions, item.id)) {
+    return res.status(400).json({ error: '该会话正在作为跳板使用，必须保存 SSH 密码' });
+  }
   item.name = name;
   item.groupPath = groupPath;
   item.host = host;
   item.port = port;
   item.username = username;
-  if (requiresCredential) {
-    return res.status(400).json({ error: '切换为私钥认证时必须填写新的私钥' });
-  }
-  const willHaveCredential = credential ? true : authType === previousAuthType && Boolean(item.credential);
-  if (authType === 'privateKey' && !willHaveCredential) {
-    return res.status(400).json({ error: '私钥认证必须保存私钥' });
-  }
-  if (authType === 'password' && !willHaveCredential && isUsedAsJump(remoteSessions, item.id)) {
-    return res.status(400).json({ error: '该会话正在作为跳板使用，必须保存 SSH 密码' });
-  }
   item.authType = authType;
   item.connectionMode = connectionMode;
   item.jumpSessionId = jumpSessionId;
@@ -1213,14 +1213,13 @@ app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, 
     .filter(id => users.some(user => user.id === id && !user.deletedAt));
   item.allowedGroupPaths = [...new Set(Array.isArray(req.body.allowedGroupPaths) ? req.body.allowedGroupPaths.map(normalizeUserGroupPath) : [])].filter(Boolean);
   item.active = req.body.active !== false;
-  if (credential) item.credential = encryptSecret(credential);
-  else if (authType !== previousAuthType) item.credential = null;
+  if (willUpdateCredential) item.credential = encryptSecret(credential);
+  else if (willClearCredential) item.credential = null;
   item.updatedAt = new Date().toISOString();
   writeRemoteSessions(remoteSessions);
   audit(req.user.username, 'REMOTE_SESSION_UPDATED', `${groupPath ? `${groupPath}/` : ''}${name} ${username}@${host}:${port}${connectionMode === 'jump' ? ` via ${jumpSessionId}` : ''}`, req);
   res.json({ session: remoteSessionView(item, users, true) });
 });
-
 app.delete('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const remoteSessions = readRemoteSessions();
   const index = remoteSessions.findIndex(item => item.id === req.params.id);
