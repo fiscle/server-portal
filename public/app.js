@@ -11,6 +11,7 @@ let invitePage = 1;
 let remoteAdminPage = 1;
 let remoteAdminQuery = '';
 let remoteAdminGroup = '';
+let remoteAdminReauthToken = '';
 let auditPage = 1;
 let auditQuery = '';
 let auditUsername = '';
@@ -413,6 +414,45 @@ function showWideModal(title, body) {
 }
 $('.dialog-close').onclick = () => $('#modal').close();
 
+function remoteAdminHeaders(extra = {}) {
+  return { ...extra, 'X-Remote-Reauth-Token': remoteAdminReauthToken };
+}
+
+function requestRemoteReauth({ purpose, sessionId = '', title = '远程会话二次验证', description = '为了保护服务器 Shell，请输入当前账号密码后继续。' }) {
+  return new Promise((resolve, reject) => {
+    showModal(title, `<form id="remote-reauth-form">
+      <p class="form-help">${escapeHtml(description)}</p>
+      <label>当前账号密码<input name="password" type="password" autocomplete="current-password" required autofocus></label>
+      <button class="primary">确认继续</button>
+    </form>`);
+    const modal = $('#modal');
+    let settled = false;
+    const cleanup = () => modal.removeEventListener('close', onClose);
+    const onClose = () => {
+      cleanup();
+      if (!settled) reject(new Error('已取消二次认证'));
+    };
+    modal.addEventListener('close', onClose);
+    $('#remote-reauth-form').onsubmit = async event => {
+      event.preventDefault();
+      try {
+        const password = new FormData(event.target).get('password');
+        const data = await api('/api/remote-reauth', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ purpose, sessionId, password })
+        });
+        settled = true;
+        cleanup();
+        modal.close();
+        resolve(data.token);
+      } catch (error) {
+        toast(error.message, true);
+      }
+    };
+  });
+}
+
 function editUser(user) {
   showModal('编辑用户', `<form id="edit-user-form">
     <label>姓名<input name="displayName" value="${escapeHtml(user.displayName)}"></label>
@@ -681,7 +721,14 @@ async function loadRemoteSessions() {
   } catch (error) { toast(error.message, true); }
 }
 
-async function openRemoteSessionManager(page = remoteAdminPage) {
+async function openRemoteSessionManager(page = remoteAdminPage, authenticated = false) {
+  if (!authenticated) {
+    remoteAdminReauthToken = await requestRemoteReauth({
+      purpose: 'admin',
+      title: '配置会话二次验证',
+      description: '远程会话配置会影响服务器访问权限，请输入当前账号密码后继续。'
+    });
+  }
   remoteAdminPage = page;
   showWideModal('远程会话配置', `<div class="remote-manager">
     <div class="remote-manager-toolbar">
@@ -733,7 +780,7 @@ function renderRemoteGroupTree(groups) {
 
 async function loadAdminRemoteSessions(page = remoteAdminPage) {
   try {
-    const data = await api(`/api/admin/remote-sessions?page=${page}&pageSize=10&q=${encodeURIComponent(remoteAdminQuery)}&group=${encodeURIComponent(remoteAdminGroup)}`);
+    const data = await api(`/api/admin/remote-sessions?page=${page}&pageSize=10&q=${encodeURIComponent(remoteAdminQuery)}&group=${encodeURIComponent(remoteAdminGroup)}`, { headers: remoteAdminHeaders() });
     remoteAdminPage = data.pagination.page;
     const groupSelect = $('#remote-admin-group');
     if (groupSelect) {
@@ -756,7 +803,7 @@ async function loadAdminRemoteSessions(page = remoteAdminPage) {
     $$('.delete-remote-session').forEach(button => button.onclick = async () => {
       if (!confirm('确认删除此远程会话？')) return;
       try {
-        const result = await api(`/api/admin/remote-sessions/${button.dataset.id}`, { method: 'DELETE' });
+        const result = await api(`/api/admin/remote-sessions/${button.dataset.id}`, { method: 'DELETE', headers: remoteAdminHeaders() });
         toast(result.message);
         await loadAdminRemoteSessions(remoteAdminPage);
         await loadRemoteSessions();
@@ -772,7 +819,7 @@ async function openRemoteSessionForm(item = null) {
     const userOptions = await api('/api/user-options');
     const users = userOptions.users;
     const groups = userOptions.groups || [];
-    const jumpSessions = (await api(`/api/admin/remote-session-options${item ? `?excludeId=${encodeURIComponent(item.id)}` : ''}`)).sessions;
+    const jumpSessions = (await api(`/api/admin/remote-session-options${item ? `?excludeId=${encodeURIComponent(item.id)}` : ''}`, { headers: remoteAdminHeaders() })).sessions;
     const selected = new Set(item?.allowedUserIds || []);
     const selectedGroups = new Set(item?.allowedGroupPaths || []);
     const connectionMode = item?.connectionMode === 'jump' ? 'jump' : 'direct';
@@ -813,10 +860,10 @@ async function openRemoteSessionForm(item = null) {
       };
       try {
         await api(item ? `/api/admin/remote-sessions/${item.id}` : '/api/admin/remote-sessions', {
-          method: item ? 'PATCH' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+          method: item ? 'PATCH' : 'POST', headers: remoteAdminHeaders({ 'Content-Type': 'application/json' }), body: JSON.stringify(payload)
         });
         toast(item ? '会话已更新' : '会话已创建');
-        await openRemoteSessionManager(remoteAdminPage);
+        await openRemoteSessionManager(remoteAdminPage, true);
         await loadRemoteSessions();
       } catch (error) {
         errorBox.textContent = error.message;
@@ -828,13 +875,27 @@ async function openRemoteSessionForm(item = null) {
 }
 
 function editRemoteSession(item) { openRemoteSessionForm(item); }
-$('#add-remote-session').onclick = () => openRemoteSessionManager(1);
-function connectRemoteSession(sessionId, name) {
+$('#add-remote-session').onclick = async () => {
+  try { await openRemoteSessionManager(1); } catch (error) { toast(error.message, true); }
+};
+async function connectRemoteSession(sessionId, name) {
+  let reauthToken = '';
+  try {
+    reauthToken = await requestRemoteReauth({
+      purpose: 'connect',
+      sessionId,
+      title: '远程连接二次验证',
+      description: `即将连接远程会话「${name}」。为了保护服务器 Shell，请输入当前账号密码。`
+    });
+  } catch (error) {
+    toast(error.message, true);
+    return;
+  }
   if (socket) socket.close();
   terminal.clear();
   terminal.writeln(`\x1b[33m正在连接会话「${name}」...\x1b[0m`);
   socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws/terminal`);
-  socket.onopen = () => socket.send(JSON.stringify({ type: 'connect', sessionId, cols: terminal.cols, rows: terminal.rows }));
+  socket.onopen = () => socket.send(JSON.stringify({ type: 'connect', sessionId, reauthToken, cols: terminal.cols, rows: terminal.rows }));
   socket.onmessage = event => {
     const message = JSON.parse(event.data);
     if (message.type === 'data') terminal.write(message.data);

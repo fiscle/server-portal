@@ -33,6 +33,8 @@ const sessions = new Map();
 const captchas = new Map();
 const requestLimits = new Map();
 const authAttempts = new Map();
+const remoteReauthTokens = new Map();
+const remoteReauthFailures = new Map();
 
 fs.mkdirSync(DATA, { recursive: true, mode: 0o750 });
 fs.mkdirSync(FILES, { recursive: true, mode: 0o750 });
@@ -414,6 +416,69 @@ function cookies(req) {
 
 function requestIdentity(req) {
   return `${req.socket.remoteAddress || '-'}|${req.headers['user-agent'] || '-'}`;
+}
+
+function remoteReauthFailureKey(user, purpose, req) {
+  return `${user.id}|${purpose}|${requestMeta(req).ip || '-'}`;
+}
+
+function remoteReauthLocked(user, purpose, req) {
+  const record = remoteReauthFailures.get(remoteReauthFailureKey(user, purpose, req));
+  return Boolean(record && record.lockedUntil && record.lockedUntil > Date.now());
+}
+
+function recordRemoteReauthFailure(user, purpose, req) {
+  const key = remoteReauthFailureKey(user, purpose, req);
+  const now = Date.now();
+  const record = remoteReauthFailures.get(key) || { count: 0, resetAt: now + 10 * 60 * 1000, lockedUntil: 0 };
+  if (record.resetAt <= now) {
+    record.count = 0;
+    record.resetAt = now + 10 * 60 * 1000;
+    record.lockedUntil = 0;
+  }
+  record.count += 1;
+  if (record.count >= 5) record.lockedUntil = now + 10 * 60 * 1000;
+  remoteReauthFailures.set(key, record);
+}
+
+function clearRemoteReauthFailures(user, purpose, req) {
+  remoteReauthFailures.delete(remoteReauthFailureKey(user, purpose, req));
+}
+
+function createRemoteReauthToken(req, user, purpose, sessionId = '') {
+  const token = crypto.randomBytes(32).toString('hex');
+  const ttlMs = purpose === 'remote-admin' ? 5 * 60 * 1000 : 90 * 1000;
+  remoteReauthTokens.set(token, {
+    userId: user.id,
+    sid: cookies(req).sid || '',
+    identity: requestIdentity(req),
+    purpose,
+    sessionId,
+    expiresAt: Date.now() + ttlMs
+  });
+  return { token, expiresAt: new Date(Date.now() + ttlMs).toISOString() };
+}
+
+function verifyRemoteReauthToken(req, user, purpose, sessionId = '', token = '', consume = false) {
+  const record = remoteReauthTokens.get(String(token || ''));
+  if (!record) return false;
+  const ok = record.expiresAt > Date.now() &&
+    record.userId === user.id &&
+    record.sid === (cookies(req).sid || '') &&
+    record.identity === requestIdentity(req) &&
+    record.purpose === purpose &&
+    (!record.sessionId || record.sessionId === sessionId);
+  if (consume || !ok) remoteReauthTokens.delete(String(token || ''));
+  return ok;
+}
+
+function remoteAdminReauth(req, res, next) {
+  const token = req.headers['x-remote-reauth-token'] || req.query.reauthToken || req.body?.reauthToken;
+  if (!verifyRemoteReauthToken(req, req.user, 'remote-admin', '', token, false)) {
+    audit(req.user.username, 'REMOTE_ADMIN_REAUTH_REQUIRED', req.path, req);
+    return res.status(403).json({ error: '远程会话配置需要二次认证，请重新打开配置会话' });
+  }
+  next();
 }
 
 function rateLimit(bucket, limit, windowMs) {
@@ -953,7 +1018,40 @@ app.get('/api/remote-sessions', auth, (req, res) => {
   res.json({ sessions: remoteSessions });
 });
 
-app.get('/api/admin/remote-sessions', auth, adminOnly, (req, res) => {
+function canUseRemoteSession(user, savedSession) {
+  return savedSession && savedSession.active && (
+    user.role === 'admin' ||
+    (savedSession.allowedUserIds || []).includes(user.id) ||
+    userInAllowedGroup(user.groupPath, savedSession.allowedGroupPaths)
+  );
+}
+
+app.post('/api/remote-reauth', auth, rateLimit('remote-reauth', 30, 10 * 60 * 1000), (req, res) => {
+  const purpose = req.body.purpose === 'admin' || req.body.purpose === 'remote-admin' ? 'remote-admin' : 'remote-connect';
+  const sessionId = String(req.body.sessionId || '');
+  const password = String(req.body.password || '');
+  if (remoteReauthLocked(req.user, purpose, req)) {
+    audit(req.user.username, 'REMOTE_REAUTH_LOCKED', purpose, req);
+    return res.status(429).json({ error: '二次认证失败次数过多，请 10 分钟后再试' });
+  }
+  if (!verifyPassword(password, req.user)) {
+    recordRemoteReauthFailure(req.user, purpose, req);
+    audit(req.user.username, 'REMOTE_REAUTH_FAILED', purpose === 'remote-connect' ? sessionId : 'remote-admin', req);
+    return res.status(401).json({ error: '二次认证密码不正确' });
+  }
+  if (purpose === 'remote-admin') {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: '仅管理员可配置远程会话' });
+  } else {
+    const savedSession = readRemoteSessions().find(item => item.id === sessionId);
+    if (!canUseRemoteSession(req.user, savedSession)) return res.status(403).json({ error: '远程会话不存在或未授权' });
+  }
+  clearRemoteReauthFailures(req.user, purpose, req);
+  const token = createRemoteReauthToken(req, req.user, purpose, purpose === 'remote-connect' ? sessionId : '');
+  audit(req.user.username, 'REMOTE_REAUTH_SUCCESS', purpose === 'remote-connect' ? sessionId : 'remote-admin', req);
+  res.json(token);
+});
+
+app.get('/api/admin/remote-sessions', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const users = readUsers();
   const query = String(req.query.q || '').trim().toLowerCase();
   const group = normalizeRemoteGroupPath(req.query.group || '');
@@ -977,7 +1075,7 @@ app.get('/api/admin/remote-sessions', auth, adminOnly, (req, res) => {
   });
 });
 
-app.get('/api/admin/remote-session-options', auth, adminOnly, (req, res) => {
+app.get('/api/admin/remote-session-options', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const excludeId = String(req.query.excludeId || '');
   const sessions = readRemoteSessions()
     .filter(item => item.active && item.id !== excludeId)
@@ -993,7 +1091,7 @@ app.get('/api/admin/remote-session-options', auth, adminOnly, (req, res) => {
   res.json({ sessions });
 });
 
-app.post('/api/admin/remote-sessions', auth, adminOnly, (req, res) => {
+app.post('/api/admin/remote-sessions', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const name = String(req.body.name || '').trim();
   const groupPath = normalizeRemoteGroupPath(req.body.groupPath || '');
   const host = String(req.body.host || '').trim();
@@ -1027,7 +1125,7 @@ app.post('/api/admin/remote-sessions', auth, adminOnly, (req, res) => {
   res.status(201).json({ session: remoteSessionView(item, users, true) });
 });
 
-app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, (req, res) => {
+app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const remoteSessions = readRemoteSessions();
   const item = remoteSessions.find(session => session.id === req.params.id);
   if (!item) return res.status(404).json({ error: '远程会话不存在' });
@@ -1077,7 +1175,7 @@ app.patch('/api/admin/remote-sessions/:id', auth, adminOnly, (req, res) => {
   res.json({ session: remoteSessionView(item, users, true) });
 });
 
-app.delete('/api/admin/remote-sessions/:id', auth, adminOnly, (req, res) => {
+app.delete('/api/admin/remote-sessions/:id', auth, adminOnly, remoteAdminReauth, (req, res) => {
   const remoteSessions = readRemoteSessions();
   const index = remoteSessions.findIndex(item => item.id === req.params.id);
   if (index < 0) return res.status(404).json({ error: '远程会话不存在' });
@@ -1303,6 +1401,10 @@ wss.on('connection', (ws, req) => {
           userInAllowedGroup(req.user.groupPath, savedSession.allowedGroupPaths)
         );
       if (!authorized) return ws.send(JSON.stringify({ type: 'error', message: '远程会话不存在或未授权' }));
+      if (!verifyRemoteReauthToken(req, req.user, 'remote-connect', savedSession.id, message.reauthToken, true)) {
+        audit(req.user.username, 'REMOTE_REAUTH_TOKEN_INVALID', savedSession.name, req);
+        return ws.send(JSON.stringify({ type: 'error', message: '远程会话二次认证已失效，请重新连接' }));
+      }
       const { host, port, username } = savedSession;
       connected = true;
       try {
@@ -1343,6 +1445,8 @@ setInterval(() => {
   for (const [sid, session] of sessions) if (session.expires < now) sessions.delete(sid);
   for (const [token, captcha] of captchas) if (captcha.expiresAt < now) captchas.delete(token);
   for (const [key, record] of requestLimits) if (record.resetAt < now) requestLimits.delete(key);
+  for (const [token, record] of remoteReauthTokens) if (record.expiresAt < now) remoteReauthTokens.delete(token);
+  for (const [key, record] of remoteReauthFailures) if (record.resetAt < now && (!record.lockedUntil || record.lockedUntil < now)) remoteReauthFailures.delete(key);
 }, 10 * 60 * 1000).unref();
 
 server.listen(PORT, HOST, () => {
